@@ -6,9 +6,10 @@ Simple iOS Build Library for Shell Scripts
 Usage
 -----
 ```
-#!/bin/sh
+#!/usr/bin/env bash
 
-# Source the library functions
+# Bootstrap build script
+[[ -r ios-build-lib.sh ]] || curl -s -O https://raw.githubusercontent.com/baudm/ios-build-lib/master/ios-build-lib.sh
 . ios-build-lib.sh
 
 # Just print out the version of this library
