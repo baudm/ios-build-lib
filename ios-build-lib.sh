@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # The MIT License (MIT)
 # 
@@ -22,108 +22,113 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-export IBL_VERSION="0.1.0"
+declare -xr IBL_VERSION="0.2.0"
 
 ibl_init() {
-    [ -n "$KEYCHAIN_PATH" ] || _ibl_error "KEYCHAIN_PATH undefined!"
-    [ -n "$KEYCHAIN_PASSWORD" ] || _ibl_error "KEYCHAIN_PASSWORD undefined!"
-    [ -n "$PROVISIONING_PROFILE" ] || _ibl_warn "PROVISIONING_PROFILE undefined!"
-    [ -n "$CODE_SIGN_IDENTITY" ] || _ibl_warn "CODE_SIGN_IDENTITY undefined!"
-    [ -n "$BUILD_NUMBER" ] || _ibl_warn "BUILD_NUMBER undefined!"
+    # Usually defined by CI software (e.g. Jenkins)
+    [[ "$BUILD_NUMBER" ]] || _ibl_warn "BUILD_NUMBER undefined!"
 
-    local workspace="`cd $(dirname $1); pwd -P`"
+    # Standard variable names used by kpp-management-plugin
+    [[ "$KEYCHAIN_PATH" ]] || _ibl_warn "KEYCHAIN_PATH undefined!"
+    [[ "$KEYCHAIN_PASSWORD" ]] || _ibl_warn "KEYCHAIN_PASSWORD undefined!"
+    [[ "$PROVISIONING_PROFILE" ]] || _ibl_warn "PROVISIONING_PROFILE undefined!"
+
+    # The plugin uses CODE_SIGNING_IDENTITY variable instead of CODE_SIGN_IDENTITY
+    [[ "${CODE_SIGN_IDENTITY:=$CODE_SIGNING_IDENTITY}" ]] || _ibl_warn "CODE_SIGN_IDENTITY and CODE_SIGNING_IDENTITY undefined!"
+
+    local -r workspace="$(cd "$(dirname "$1")"; pwd -P)"
     export IBL_BUILD_DIR="$workspace/build"
     mkdir -p "$IBL_BUILD_DIR"
 }
+readonly -f ibl_init
 
 ibl_cleanup() {
-    security delete-keychain "$KEYCHAIN_PATH"
+    if [[ -w "$KEYCHAIN_PATH" ]]; then
+        security delete-keychain "$KEYCHAIN_PATH"
+    fi
 }
+readonly -f ibl_cleanup
 
 ibl_build() {
-    [ -f "$IBL_BUILD_CONF" ] || _ibl_dump_config "$@"
-    _ibl_keychain_is_ready || _ibl_prepare_keychain
+    [[ -r "$IBL_BUILD_CONF" ]] || _ibl_dump_config "$@"
+    [[ -r "$KEYCHAIN_PATH" ]] && _ibl_prepare_keychain
 
     . "$IBL_BUILD_CONF"
 
     # Set build number
-    if [ -n "$BUILD_NUMBER" ]; then
+    if [[ "$BUILD_NUMBER" ]]; then
         /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFOPLIST_FILE"
     else
-        export BUILD_NUMBER="`/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFOPLIST_FILE"`"
+        export BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFOPLIST_FILE")"
     fi
 
-    _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build \
-        OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" |
-        tee "$IBL_BUILD_DIR/xcodebuild.log"
+    _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build | tee "$IBL_BUILD_DIR/xcodebuild.log"
 }
+readonly -f ibl_build
 
 ibl_package() {
-    local profile="$1"
-    local suffix="$2"
-    local profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+    local -r profile="${1:-$PROVISIONING_PROFILE}"
+    local -r suffix="$2"
+    local -r profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
 
-    [ -f "$IBL_BUILD_CONF" ] || _ibl_error "Xcode build environment configuration is missing!"
+    [[ -r "$IBL_BUILD_CONF" ]] || _ibl_error "Xcode build environment configuration is missing!"
     . "$IBL_BUILD_CONF"
 
-    [ -n "$profile" ] || profile="$PROVISIONING_PROFILE"
+    local tag="$(_ibl_get_build_version)"
+    if [[ "$suffix" ]]; then
+        tag="${tag}-${suffix}"
+    fi
 
-    tag="`_ibl_get_build_version`"
-    [ -n "$suffix" ] && tag="${tag}-${suffix}"
-
-    xcrun -sdk "$SDK_NAME" PackageApplication -v "$CODESIGNING_FOLDER_PATH" \
+    xcrun -sdk "$SDK_NAME" PackageApplication "$CODESIGNING_FOLDER_PATH" \
         -o "$IBL_BUILD_DIR/${PRODUCT_NAME}_${tag}.ipa" \
         --embed "$profile_dir/${profile}.mobileprovision"
 }
+readonly -f ibl_package
 
 ibl_archive_dsym() {
-    [ -f "$IBL_BUILD_CONF" ] || _ibl_error "Xcode build environment configuration is missing!"
+    [[ -r "$IBL_BUILD_CONF" ]] || _ibl_error "Xcode build environment configuration is missing!"
     . "$IBL_BUILD_CONF"
-    local version="`_ibl_get_build_version`"
+    local -r version="$(_ibl_get_build_version)"
     cd "$DWARF_DSYM_FOLDER_PATH"
     zip -r "$IBL_BUILD_DIR/${PRODUCT_NAME}_${version}-dSYM.zip" "$DWARF_DSYM_FILE_NAME"
     cd -
 }
+readonly -f ibl_archive_dsym
 
 _ibl_error() {
-    echo "ios-build: $@" 1>&2
+    echo "${FUNCNAME[1]}: error: $@" >&2
     exit 1
 }
 
 _ibl_warn() {
-    echo "ios-build: $@" 1>&2
+    echo "${FUNCNAME[1]}: warning: $@" >&2
 }
 
 _ibl_xcodebuild_args() {
     echo SYMROOT=\"$IBL_BUILD_DIR\"
     echo OBJROOT=\"$IBL_BUILD_DIR\"
     # Optional
-    [ -n "$PROVISIONING_PROFILE" ] && echo PROVISIONING_PROFILE=\"$PROVISIONING_PROFILE\"
-    [ -n "$CODE_SIGN_IDENTITY" ] && echo CODE_SIGN_IDENTITY=\"$CODE_SIGN_IDENTITY\"
+    [[ "$PROVISIONING_PROFILE" ]] && echo PROVISIONING_PROFILE=\"$PROVISIONING_PROFILE\"
+    [[ "$CODE_SIGN_IDENTITY" ]] && echo CODE_SIGN_IDENTITY=\"$CODE_SIGN_IDENTITY\"
+    [[ -r "$KEYCHAIN_PATH" ]] && echo OTHER_CODE_SIGN_FLAGS=\"--keychain $KEYCHAIN_PATH\"
 }
 
 _ibl_get_build_version() {
-    local version="`/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFOPLIST_FILE"`"
-    local build="`/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFOPLIST_FILE"`"
+    local -r version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFOPLIST_FILE")"
+    local -r build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFOPLIST_FILE")"
     printf "${version}-${build}"
 }
 
 _ibl_dump_config() {
     export IBL_BUILD_CONF="$IBL_BUILD_DIR/build.conf"
     _ibl_xcodebuild_args | xargs xcodebuild "$@" -showBuildSettings |
-        grep -v 'UID' | sed -n "s/^ *\([A-Z_]*\) = \(.*\)$/export \1='\2'/p" > "$IBL_BUILD_CONF"
+        grep -v 'UID' | sed -n "s/^ *\([A-Z_]*\) = \(.*\)$/\1='\2'/p" > "$IBL_BUILD_CONF"
 }
 
 _ibl_prepare_keychain() {
-    # _add_ keychain to the search list, but _keep_ the current search list
-    security list-keychains | xargs security list-keychains -s "$KEYCHAIN_PATH"
-    security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-}
-
-_ibl_keychain_is_ready() {
-    if [ -n "`security list-keychains | grep "$KEYCHAIN_PATH"`" ]; then
-        return 1
-    else
-        return 0
+    if [[ -z "$(security list-keychains | grep "$KEYCHAIN_PATH")" ]]; then
+        # _add_ keychain to the search list, but _keep_ the current search list
+        security list-keychains | xargs security list-keychains -s "$KEYCHAIN_PATH"
     fi
+    security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 }
