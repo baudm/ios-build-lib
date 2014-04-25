@@ -30,16 +30,21 @@ export BUILD_NUMBER=917
 ibl_init .
 
 # Invoke xcodebuild using the given parameters
-ibl_build -sdk iphoneos -configuration Release
+ibl_build -sdk iphoneos -configuration Release | tee "$IBL_BUILD_DIR/xcodebuild.log"
 
 # Package IPA
-ibl_package
+ipa_filename="$(ibl_package_ipa)"
+echo "IPA filename: $ipa_filename"
 
-# Package another IPA using a different profile and custom suffix
-ibl_package "FFFFFFFF-5555-7777-BBBB-CCCCCCCCCCCC" "AdHoc"
+# Package another IPA using a custom suffix and different profile
+ibl_package_ipa "QA" "FFFFFFFF-5555-7777-BBBB-CCCCCCCCCCCC"
+
+# Package another IPA using a custom suffix, different profile, and re-sign using a different identity
+ibl_package_ipa "AppStore" "FFFFFFFF-5555-7777-BBBB-CCCCCCCCCCCC" "iPhone Distribution: Some Entity"
 
 # zip dSYM
-ibl_archive_dsym
+dsym_filename="$(ibl_archive_dsym)"
+echo "dSYM filename: $dsym_filename"
 
 # Don't forget to cleanup
 ibl_cleanup
