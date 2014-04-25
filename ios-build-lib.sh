@@ -22,9 +22,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-declare -xr IBL_VERSION="0.2.0"
+declare -xr IBL_VERSION="0.3.0"
 
 ibl_init() {
+    [[ $# -eq 1 ]] || _ibl_error "Expected path to workspace"
+
     # Usually defined by CI software (e.g. Jenkins)
     [[ "$BUILD_NUMBER" ]] || _ibl_warn "BUILD_NUMBER undefined!"
 
@@ -37,12 +39,17 @@ ibl_init() {
     [[ "${CODE_SIGN_IDENTITY:=$CODE_SIGNING_IDENTITY}" ]] || _ibl_warn "CODE_SIGN_IDENTITY and CODE_SIGNING_IDENTITY undefined!"
 
     local -r workspace="$(cd "$(dirname "$1")"; pwd -P)"
+
     export IBL_BUILD_DIR="$workspace/build"
+    export IBL_BUILD_CONF="$IBL_BUILD_DIR/build.conf"
+    export IBL_PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+
     mkdir -p "$IBL_BUILD_DIR"
 }
 readonly -f ibl_init
 
 ibl_cleanup() {
+    [[ $# -eq 0 ]] || _ibl_error "No arguments expected"
     if [[ -w "$KEYCHAIN_PATH" ]]; then
         security delete-keychain "$KEYCHAIN_PATH"
     fi
@@ -51,49 +58,71 @@ readonly -f ibl_cleanup
 
 ibl_build() {
     [[ -r "$IBL_BUILD_CONF" ]] || _ibl_dump_config "$@"
-    [[ -r "$KEYCHAIN_PATH" ]] && _ibl_prepare_keychain
-
     . "$IBL_BUILD_CONF"
 
-    # Set build number
+    [[ -r "$KEYCHAIN_PATH" ]] && _ibl_prepare_keychain
+
     if [[ "$BUILD_NUMBER" ]]; then
         /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFOPLIST_FILE"
-    else
-        export BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFOPLIST_FILE")"
     fi
 
-    _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build | tee "$IBL_BUILD_DIR/xcodebuild.log"
+    _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build
 }
 readonly -f ibl_build
 
-ibl_package() {
-    local -r profile="${1:-$PROVISIONING_PROFILE}"
-    local -r suffix="$2"
-    local -r profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
-
+ibl_package_ipa() {
+    [[ $# -le 3 ]] || _ibl_error "Expected a maximum of 3 arguments"
     [[ -r "$IBL_BUILD_CONF" ]] || _ibl_error "Xcode build environment configuration is missing!"
     . "$IBL_BUILD_CONF"
+
+    local -r suffix="$1"
+    local -r profile="${2:-$PROVISIONING_PROFILE}"
+    local -r identity="${3:-$CODE_SIGN_IDENTITY}"
 
     local tag="$(_ibl_get_build_version)"
-    if [[ "$suffix" ]]; then
-        tag="${tag}-${suffix}"
-    fi
+    [[ "$suffix" ]] && tag="${tag}-${suffix}"
+    local -r ipa_filename="${PRODUCT_NAME}_${tag}.ipa"
 
-    xcrun -sdk "$SDK_NAME" PackageApplication "$CODESIGNING_FOLDER_PATH" \
-        -o "$IBL_BUILD_DIR/${PRODUCT_NAME}_${tag}.ipa" \
-        --embed "$profile_dir/${profile}.mobileprovision"
+    xcrun --sdk "$SDK_NAME" PackageApplication "$CODESIGNING_FOLDER_PATH" \
+        -o "$IBL_BUILD_DIR/$ipa_filename" \
+        --sign "$identity" \
+        --embed "$IBL_PROFILE_DIR/${profile}.mobileprovision" >/dev/null
+
+    echo "$ipa_filename"
 }
-readonly -f ibl_package
+readonly -f ibl_package_ipa
 
 ibl_archive_dsym() {
+    [[ $# -eq 0 ]] || _ibl_error "No arguments expected"
     [[ -r "$IBL_BUILD_CONF" ]] || _ibl_error "Xcode build environment configuration is missing!"
     . "$IBL_BUILD_CONF"
-    local -r version="$(_ibl_get_build_version)"
-    cd "$DWARF_DSYM_FOLDER_PATH"
-    zip -r "$IBL_BUILD_DIR/${PRODUCT_NAME}_${version}-dSYM.zip" "$DWARF_DSYM_FILE_NAME"
-    cd -
+
+    local -r dsym_filename="${PRODUCT_NAME}_$(_ibl_get_build_version)-dSYM.zip"
+    {
+        cd "$DWARF_DSYM_FOLDER_PATH"
+        zip -r "$IBL_BUILD_DIR/$dsym_filename" "$DWARF_DSYM_FILE_NAME"
+        cd -
+    } >/dev/null
+
+    echo "$dsym_filename"
 }
 readonly -f ibl_archive_dsym
+
+ibl_get_profile_uuid() {
+    [[ $# -eq 1 ]] || _ibl_error "Expected path to provisioning profile"
+    local -r profile="$1"
+    egrep --text '[A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12}' "$profile" |
+        sed 's|.*<string>\([0-9A-Z\-]*\)</string>.*|\1|'
+}
+readonly -f ibl_get_profile_uuid
+
+ibl_install_profile() {
+    [[ $# -eq 1 ]] || _ibl_error "Expected path to provisioning profile"
+    local -r profile="$1"
+    local -r uuid="$(ibl_get_profile_uuid "$profile")"
+    cp -f "$profile" "$IBL_PROFILE_DIR/${uuid}.mobileprovision"
+}
+readonly -f ibl_install_profile
 
 _ibl_error() {
     echo "${FUNCNAME[1]}: error: $@" >&2
@@ -107,6 +136,8 @@ _ibl_warn() {
 _ibl_xcodebuild_args() {
     echo SYMROOT=\"$IBL_BUILD_DIR\"
     echo OBJROOT=\"$IBL_BUILD_DIR\"
+    echo DSTROOT=\"$IBL_BUILD_DIR\"
+    echo SHARED_PRECOMPS_DIR=\"$IBL_BUILD_DIR\"
     # Optional
     [[ "$PROVISIONING_PROFILE" ]] && echo PROVISIONING_PROFILE=\"$PROVISIONING_PROFILE\"
     [[ "$CODE_SIGN_IDENTITY" ]] && echo CODE_SIGN_IDENTITY=\"$CODE_SIGN_IDENTITY\"
@@ -120,7 +151,6 @@ _ibl_get_build_version() {
 }
 
 _ibl_dump_config() {
-    export IBL_BUILD_CONF="$IBL_BUILD_DIR/build.conf"
     _ibl_xcodebuild_args | xargs xcodebuild "$@" -showBuildSettings |
         grep -v 'UID' | sed -n "s/^ *\([A-Z_]*\) = \(.*\)$/\1='\2'/p" > "$IBL_BUILD_CONF"
 }
