@@ -71,13 +71,13 @@ ibl_build() {
 readonly -f ibl_build
 
 ibl_package_ipa() {
-    [[ $# -le 3 ]] || _ibl_error "Expected a maximum of 3 arguments"
+    [[ $# -le 2 ]] || _ibl_error "Expected a maximum of 2 arguments"
     [[ -r "$IBL_BUILD_CONF" ]] || _ibl_error "Xcode build environment configuration is missing!"
     . "$IBL_BUILD_CONF"
 
     local -r suffix="$1"
     local -r profile="${2:-$PROVISIONING_PROFILE}"
-    local -r identity="${3:-$CODE_SIGN_IDENTITY}"
+    #local -r identity="${3:-$CODE_SIGN_IDENTITY}"
 
     local tag="$(_ibl_get_build_version)"
     [[ "$suffix" ]] && tag="${tag}-${suffix}"
@@ -85,8 +85,8 @@ ibl_package_ipa() {
 
     xcrun --sdk "$SDK_NAME" PackageApplication "$CODESIGNING_FOLDER_PATH" \
         -o "$IBL_BUILD_DIR/$ipa_filename" \
-        --sign "$identity" \
         --embed "$IBL_PROFILE_DIR/${profile}.mobileprovision" >/dev/null
+        #--sign "$identity" \
 
     echo "$ipa_filename"
 }

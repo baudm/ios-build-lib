@@ -39,9 +39,6 @@ echo "IPA filename: $ipa_filename"
 # Package another IPA using a custom suffix and different profile
 ibl_package_ipa "QA" "FFFFFFFF-5555-7777-BBBB-CCCCCCCCCCCC"
 
-# Package another IPA using a custom suffix, different profile, and re-sign using a different identity
-ibl_package_ipa "AppStore" "FFFFFFFF-5555-7777-BBBB-CCCCCCCCCCCC" "iPhone Distribution: Some Entity"
-
 # zip dSYM
 dsym_filename="$(ibl_archive_dsym)"
 echo "dSYM filename: $dsym_filename"
