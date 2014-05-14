@@ -22,7 +22,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-declare -xr IBL_VERSION="0.3.0"
+declare -xr IBL_VERSION="0.4.0"
 
 ibl_init() {
     [[ $# -eq 1 ]] || _ibl_error "Expected path to workspace"
@@ -63,8 +63,15 @@ ibl_build() {
     [[ -r "$KEYCHAIN_PATH" ]] && _ibl_prepare_keychain
 
     if [[ "$BUILD_NUMBER" ]]; then
+        local -r bundle_version="$BUILD_NUMBER"
         /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFOPLIST_FILE"
+    else
+        local -r bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFOPLIST_FILE")"
     fi
+
+    # Append bundle_version/BUILD_NUMBER to the user-visible version string
+    local -r version_string="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFOPLIST_FILE")"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version_string}.${bundle_version}" "$INFOPLIST_FILE"
 
     _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build
 }
@@ -145,9 +152,8 @@ _ibl_xcodebuild_args() {
 }
 
 _ibl_get_build_version() {
-    local -r version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFOPLIST_FILE")"
-    local -r build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFOPLIST_FILE")"
-    printf "${version}-${build}"
+    # bundle_version/BUILD_NUMBER is already appended to the version string
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFOPLIST_FILE"
 }
 
 _ibl_dump_config() {
