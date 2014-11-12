@@ -22,7 +22,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-declare -xr IBL_VERSION="0.4.0"
+declare -xr IBL_VERSION="0.5.0"
 
 ibl_init() {
     [[ $# -eq 1 ]] || _ibl_error "Expected path to workspace"
@@ -37,6 +37,9 @@ ibl_init() {
 
     # The plugin uses CODE_SIGNING_IDENTITY variable instead of CODE_SIGN_IDENTITY
     [[ "${CODE_SIGN_IDENTITY:=$CODE_SIGNING_IDENTITY}" ]] || _ibl_warn "CODE_SIGN_IDENTITY and CODE_SIGNING_IDENTITY undefined!"
+
+    # Control whether to append the build number to the final version string or not
+    [[ "$IBL_BUILD_NUMBER_SEPARATOR" ]] || _ibl_warn "IBL_BUILD_NUMBER_SEPARATOR undefined! Not appending the build number to the version."
 
     local -r workspace="$(cd "$(dirname "$1")"; pwd -P)"
 
@@ -69,9 +72,12 @@ ibl_build() {
         local -r bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFOPLIST_FILE")"
     fi
 
-    # Append bundle_version/BUILD_NUMBER to the user-visible version string
-    local -r version_string="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFOPLIST_FILE")"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version_string}.${bundle_version}" "$INFOPLIST_FILE"
+    if [[ "$IBL_BUILD_NUMBER_SEPARATOR" ]]; then
+        # Append bundle_version/BUILD_NUMBER to the user-visible version string
+        local -r version_string="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFOPLIST_FILE")"
+        local -r sep="$IBL_BUILD_NUMBER_SEPARATOR"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version_string}${sep}${bundle_version}" "$INFOPLIST_FILE"
+    fi
 
     _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build
 }
@@ -95,7 +101,7 @@ ibl_package_ipa() {
         --embed "$IBL_PROFILE_DIR/${profile}.mobileprovision" >/dev/null
         #--sign "$identity" \
 
-    echo "$ipa_filename"
+    printf "$ipa_filename"
 }
 readonly -f ibl_package_ipa
 
@@ -111,7 +117,7 @@ ibl_archive_dsym() {
         cd -
     } >/dev/null
 
-    echo "$dsym_filename"
+    printf "$dsym_filename"
 }
 readonly -f ibl_archive_dsym
 
