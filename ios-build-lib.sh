@@ -22,7 +22,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-declare -xr IBL_VERSION="0.5.0"
+declare -xr IBL_VERSION="0.5.1"
 
 ibl_init() {
     [[ $# -eq 1 ]] || _ibl_error "Expected path to workspace"
@@ -124,8 +124,8 @@ readonly -f ibl_archive_dsym
 ibl_get_profile_uuid() {
     [[ $# -eq 1 ]] || _ibl_error "Expected path to provisioning profile"
     local -r profile="$1"
-    egrep --text '[A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12}' "$profile" |
-        sed 's|.*<string>\([0-9A-Z\-]*\)</string>.*|\1|'
+    egrep --text '[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}' "$profile" |
+        sed 's|.*<string>\([a-zA-Z0-9\-]*\)</string>.*|\1|'
 }
 readonly -f ibl_get_profile_uuid
 
