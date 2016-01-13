@@ -79,7 +79,7 @@ ibl_build() {
         /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version_string}${sep}${bundle_version}" "$INFOPLIST_FILE"
     fi
 
-    _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build
+    _ibl_xcodebuild_args | xargs xcodebuild "$@" clean build || _ibl_error "Build failed"
 }
 readonly -f ibl_build
 
